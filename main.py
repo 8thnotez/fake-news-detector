@@ -1,40 +1,76 @@
-import numpy as np
-import pandas as pd
-import itertools
-from sklearn.model_selection import train_test_split
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import PassiveAggressiveClassifier
-from sklearn.metrics import accuracy_score, confusion_matrix
+import requests
+from collections import Counter
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+import nltk
 
-#Read the data
-df=pd.read_csv('D:\\DataFlair\\news.csv')
+nltk.download("punkt")
+nltk.download("stopwords")
+nltk.download('punkt_tab')
 
-#Get shape and head
-df.shape
-df.head()
+def fetch_articles(prompt, api_key):
+    base_url = "https://newsapi.org/v2/everything"
+    params = {
+        "q": prompt,
+        "apiKey": api_key,
+        "language": "en",
+        "pageSize": 10,
+    }
 
-#DataFlair - Get the labels
-labels=df.label
-labels.head()
+    response = requests.get(base_url, params=params)
+    if response.status_code != 200:
+        raise Exception("Failed to fetch articles from NewsAPI.")
 
-#DataFlair - Split the dataset
-x_train,x_test,y_train,y_test=train_test_split(df['text'], labels, test_size=0.2, random_state=7)
+    articles = response.json().get("articles", [])
+    return articles
 
-#DataFlair - Initialize a TfidfVectorizer
-tfidf_vectorizer=TfidfVectorizer(stop_words='english', max_df=0.7)
+def preprocess_text(text):
+    stop_words = set(stopwords.words("english"))
+    words = word_tokenize(text.lower())
+    return [word for word in words if word.isalnum() and word not in stop_words]
 
-#DataFlair - Fit and transform train set, transform test set
-tfidf_train=tfidf_vectorizer.fit_transform(x_train) 
-tfidf_test=tfidf_vectorizer.transform(x_test)
+def calculate_validity_score(article_text, prompt_keywords):
+    if not article_text:
+        return 1
 
-#DataFlair - Initialize a PassiveAggressiveClassifier
-pac=PassiveAggressiveClassifier(max_iter=50)
-pac.fit(tfidf_train,y_train)
+    article_keywords = Counter(preprocess_text(article_text))
+    prompt_keywords_set = set(preprocess_text(" ".join(prompt_keywords)))
 
-#DataFlair - Predict on the test set and calculate accuracy
-y_pred=pac.predict(tfidf_test)
-score=accuracy_score(y_test,y_pred)
-print(f'Accuracy: {round(score*100,2)}%')
+    matched_keywords = sum(article_keywords[word] for word in prompt_keywords_set if word in article_keywords)
+    total_keywords = sum(article_keywords.values())
 
-#DataFlair - Build confusion matrix
-confusion_matrix(y_test,y_pred, labels=['FAKE','REAL'])
+    if total_keywords == 0:
+        return 1
+
+    score = (matched_keywords / total_keywords) * 10
+    print(matched_keywords, total_keywords, score)
+    return min(10, max(1, round(score)))
+
+def main():
+    prompt = input("Enter your search prompt: ")
+    api_key = "fab2bd6942d5451caaa49411c987363e"
+
+    try:
+        articles = fetch_articles(prompt, api_key)
+    except Exception as e:
+        print(f"Error: {e}")
+        return
+
+    if not articles:
+        print("No articles found.")
+        return
+
+    print(f"Found {len(articles)} articles. Scoring them for validity...\n")
+    for i, article in enumerate(articles):
+        title = article.get("title", "No Title")
+        description = article.get("description", "No Description")
+        content = article.get("content", "No Content")
+        url = article.get("url", "No URL")
+
+        combined_text = f"{title} {description} {content}"
+        score = calculate_validity_score(combined_text, prompt.split())
+
+        print(f"Article {i+1}:\nTitle: {title}\nURL: {url}\nValidity Score: {score}/10\n")
+
+if __name__ == "__main__":
+    main()
